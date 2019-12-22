@@ -1,46 +1,83 @@
-//
-// Created by sl on 18.02.17.
-//
+////
+//// Created by sl on 18.02.17.
+///  Updated by vl on 2019
+////
 
 #include <libopencm3/stm32/usart.h>
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/gpio.h>
 #include <libopencm3/stm32/spi.h>
 #include <libopencm3/stm32/f1/nvic.h>
+#include <libopencm3/cm3/systick.h>
 #include <pcd8544.h>
 #include <mhz19.h>
 #include <stdio.h>
 #include <errno.h>
 
+/* monotonically increasing number of milliseconds from reset
+ * overflows every 49 days if you're wondering
+ */
+volatile uint32_t system_millis;
+
+/* Called when systick fires */
+void sys_tick_handler(void)
+{
+    system_millis++;
+}
+
+/* sleep for delay milliseconds */
+static void msleep(uint32_t delay)
+{
+    uint32_t wake = system_millis + delay;
+    while (wake > system_millis);
+}
+
+/* Set up a timer to create 1mS ticks. */
+static void systick_setup(void)
+{
+    system_millis = 0;
+    /* 72MHz / 8 => 9000000 counts per second */
+    systick_set_clocksource(STK_CSR_CLKSOURCE_AHB_DIV8);
+    /* 9000000/9000 = 1000 overflows per second - every 1ms one interrupt */
+    /* SysTick interrupt every N clock pulses: set reload to N-1 */
+    systick_set_reload(8999);
+    systick_counter_enable();
+    /* this done last */
+    systick_interrupt_enable();
+}
+
 static void clock_setup(void) {
-  rcc_clock_setup_in_hse_8mhz_out_72mhz();
+    rcc_clock_setup_in_hse_8mhz_out_72mhz();
 
-  rcc_periph_clock_enable(RCC_GPIOA);
-  rcc_periph_clock_enable(RCC_GPIOB);
+    rcc_periph_clock_enable(RCC_GPIOA);
+    rcc_periph_clock_enable(RCC_GPIOB);
+    //rcc_periph_clock_enable(RCC_GPIOC);
 
-  /* Enable SPI2 Periph and gpio clocks */
-  rcc_periph_clock_enable(RCC_SPI2);
+    //gpio_set_mode(GPIOC, GPIO_MODE_OUTPUT_50_MHZ, GPIO_CNF_OUTPUT_PUSHPULL, GPIO13);
 
-  rcc_periph_clock_enable(RCC_USART2);
-  rcc_periph_clock_enable(RCC_USART3);
+    /* Enable SPI2 Periph and gpio clocks */
+    rcc_periph_clock_enable(RCC_SPI2);
+
+    rcc_periph_clock_enable(RCC_USART2);
+    rcc_periph_clock_enable(RCC_USART3);
 }
 
 static void pcd8544_setup(void) {
-  /* Configure GPIOs: SS=PCD8544_SPI_SS, SCK=PCD8544_SPI_SCK, MISO=UNUSED and MOSI=PCD8544_SPI_MOSI */
-  gpio_set_mode(PCD8544_SPI_PORT, GPIO_MODE_OUTPUT_50_MHZ, GPIO_CNF_OUTPUT_ALTFN_PUSHPULL,
-                PCD8544_SPI_MOSI | PCD8544_SPI_SCK | PCD8544_SPI_SS);
-  /* Reset SPI, SPI_CR1 register cleared, SPI is disabled */
-  spi_reset(PCD8544_SPI);
-  /* Set up SPI in Master mode with:
+    /* Configure GPIOs: SS=PCD8544_SPI_SS, SCK=PCD8544_SPI_SCK, MISO=UNUSED and MOSI=PCD8544_SPI_MOSI */
+    gpio_set_mode(PCD8544_SPI_PORT, GPIO_MODE_OUTPUT_50_MHZ, GPIO_CNF_OUTPUT_ALTFN_PUSHPULL,
+                  PCD8544_SPI_MOSI | PCD8544_SPI_SCK | PCD8544_SPI_SS);
+    /* Reset SPI, SPI_CR1 register cleared, SPI is disabled */
+    spi_reset(PCD8544_SPI);
+    /* Set up SPI in Master mode with:
    * Clock baud rate: 1/64 of peripheral clock frequency
    * Clock: CPOL CPHA (0:0)
    * Data frame format: 8-bit
    * Frame format: MSB First
    */
-  spi_init_master(PCD8544_SPI, SPI_CR1_BAUDRATE_FPCLK_DIV_8, SPI_CR1_CPOL_CLK_TO_0_WHEN_IDLE,
-                  SPI_CR1_CPHA_CLK_TRANSITION_1, SPI_CR1_DFF_8BIT, SPI_CR1_MSBFIRST);
+    spi_init_master(PCD8544_SPI, SPI_CR1_BAUDRATE_FPCLK_DIV_8, SPI_CR1_CPOL_CLK_TO_0_WHEN_IDLE,
+                    SPI_CR1_CPHA_CLK_TRANSITION_1, SPI_CR1_DFF_8BIT, SPI_CR1_MSBFIRST);
 
-  /*
+    /*
    * Set NSS management to software.
    *
    * Note:
@@ -48,28 +85,32 @@ static void pcd8544_setup(void) {
    * ourselves this bit needs to be at least set to 1, otherwise the spi
    * peripheral will not send any data out.
    */
-  spi_enable_software_slave_management(PCD8544_SPI);
-  spi_set_nss_high(PCD8544_SPI);
+    spi_enable_software_slave_management(PCD8544_SPI);
+    spi_set_nss_high(PCD8544_SPI);
 
-  /* Enable SPI1 periph. */
-  spi_enable(PCD8544_SPI);
+    /* Enable SPI1 periph. */
+    spi_enable(PCD8544_SPI);
 
-  /* Configure GPIOs: DC, SCE, RST */
-  gpio_set_mode(PCD8544_RST_PORT, GPIO_MODE_OUTPUT_50_MHZ, GPIO_CNF_OUTPUT_PUSHPULL,
-                PCD8544_RST);
-  gpio_set_mode(PCD8544_DC_PORT, GPIO_MODE_OUTPUT_50_MHZ, GPIO_CNF_OUTPUT_PUSHPULL,
-                PCD8544_DC);
-  gpio_set_mode(PCD8544_SCE_PORT, GPIO_MODE_OUTPUT_50_MHZ, GPIO_CNF_OUTPUT_PUSHPULL,
-                PCD8544_SCE);
+    /* Configure GPIOs: DC, SCE, RST */
+    gpio_set_mode(PCD8544_RST_PORT, GPIO_MODE_OUTPUT_50_MHZ, GPIO_CNF_OUTPUT_PUSHPULL,
+                  PCD8544_RST);
+    gpio_set_mode(PCD8544_DC_PORT, GPIO_MODE_OUTPUT_50_MHZ, GPIO_CNF_OUTPUT_PUSHPULL,
+                  PCD8544_DC);
+    gpio_set_mode(PCD8544_SCE_PORT, GPIO_MODE_OUTPUT_50_MHZ, GPIO_CNF_OUTPUT_PUSHPULL,
+                  PCD8544_SCE);
+    //gpio_set_mode(LCD_VCC_GPIO_Port, GPIO_MODE_OUTPUT_50_MHZ, GPIO_CNF_OUTPUT_PUSHPULL,
+    //              LCD_VCC_Pin);
 
-  gpio_set(PCD8544_RST_PORT, PCD8544_RST);
-  gpio_set(PCD8544_SCE_PORT, PCD8544_SCE);
+    gpio_set(PCD8544_RST_PORT, PCD8544_RST);
+    gpio_set(PCD8544_SCE_PORT, PCD8544_SCE);
+    //gpio_set(LCD_VCC_GPIO_Port, LCD_VCC_Pin);
 
-  for (int i = 0; i < 200; i++)
-      __asm__("nop");
+    for (int i = 0; i < 200; i++)
+        __asm__("nop");
 
 }
 
+/*
 int _write(int file, char *ptr, int len) {
   int i;
 
@@ -81,81 +122,189 @@ int _write(int file, char *ptr, int len) {
   errno = EIO;
   return -1;
 }
+*/
 
 static void mhz19_setup(void) {
-  nvic_enable_irq(NVIC_USART3_IRQ);
+    nvic_enable_irq(NVIC_USART3_IRQ);
 
-  gpio_set_mode(GPIOB, GPIO_MODE_OUTPUT_50_MHZ,
-                GPIO_CNF_OUTPUT_ALTFN_PUSHPULL, GPIO_USART3_TX);
-  gpio_set_mode(GPIOB, GPIO_MODE_INPUT,
-                GPIO_CNF_INPUT_PULL_UPDOWN, GPIO_USART3_RX);
+    gpio_set_mode(GPIOB, GPIO_MODE_OUTPUT_50_MHZ,
+                  GPIO_CNF_OUTPUT_ALTFN_PUSHPULL, GPIO_USART3_TX);
+    gpio_set_mode(GPIOB, GPIO_MODE_INPUT,
+                  GPIO_CNF_INPUT_PULL_UPDOWN, GPIO_USART3_RX);
 }
 
 static void usart_setup(void) {
-  gpio_set_mode(GPIOA, GPIO_MODE_OUTPUT_50_MHZ,
-                GPIO_CNF_OUTPUT_ALTFN_PUSHPULL, GPIO_USART2_TX);
-  gpio_set_mode(GPIOA, GPIO_MODE_INPUT,
-                GPIO_CNF_INPUT_PULL_UPDOWN, GPIO_USART2_RX);
+    gpio_set_mode(GPIOA, GPIO_MODE_OUTPUT_50_MHZ,
+                  GPIO_CNF_OUTPUT_ALTFN_PUSHPULL, GPIO_USART2_TX);
+    gpio_set_mode(GPIOA, GPIO_MODE_INPUT,
+                  GPIO_CNF_INPUT_PULL_UPDOWN, GPIO_USART2_RX);
 
-  usart_set_baudrate(USART2, 9600);
-  usart_set_databits(USART2, 8);
-  usart_set_stopbits(USART2, USART_STOPBITS_1);
-  usart_set_mode(USART2, USART_MODE_TX_RX);
-  usart_set_parity(USART2, USART_PARITY_NONE);
-  usart_set_flow_control(USART2, USART_FLOWCONTROL_NONE);
-  usart_enable(USART2);
+    usart_set_baudrate(USART2, 9600);
+    usart_set_databits(USART2, 8);
+    usart_set_stopbits(USART2, USART_STOPBITS_1);
+    usart_set_mode(USART2, USART_MODE_TX_RX);
+    usart_set_parity(USART2, USART_PARITY_NONE);
+    usart_set_flow_control(USART2, USART_FLOWCONTROL_NONE);
+    usart_enable(USART2);
 }
 
 void usart3_isr(void) {
-  /* Check if we were called because of RXNE. */
-  if (((USART_CR1(MH_Z19_USART) & USART_CR1_RXNEIE) != 0) &&
-      ((USART_SR(MH_Z19_USART) & USART_SR_RXNE) != 0)) {
+    /* Check if we were called because of RXNE. */
+    if (((USART_CR1(MH_Z19_USART) & USART_CR1_RXNEIE) != 0) &&
+            ((USART_SR(MH_Z19_USART) & USART_SR_RXNE) != 0)) {
 
-    /* Retrieve the data from the peripheral. */
-    mhz19_isrHandler(usart_recv(MH_Z19_USART));
-  }
+        /* Retrieve the data from the peripheral. */
+        mhz19_isrHandler(usart_recv(MH_Z19_USART));
+    }
 }
 
+void display_str(const wchar_t *str, size_t len, int x, int y)
+{
+    wchar_t buffer[50] = {0,};
+
+    swprintf(buffer, len, L"%ls", str);
+    pcd8544_drawText(x, y, BLACK, buffer);
+    pcd8544_display();
+}
+
+/*
+const uint8_t my_image[6 * 84] = {
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0xC0, 0x60, 0xF0, 0xFC, 0xFE, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x80, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x07, 0x07, 0x0F, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xF8, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xE0, 0xE0, 0xC0, 0xC1, 0xC1, 0xE3, 0x7F, 0x3C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x1F, 0xFF, 0xFF, 0xFF, 0x3F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x0F, 0x3F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x1C, 0x00, 0x00, 0x00, 0xC8, 0x00, 0x10, 0x80, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x38, 0x3F, 0x3F, 0x1F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x30, 0x38, 0x3F, 0x1F, 0x0F, 0x00, 0x00, 0x00, 0x0C, 0x0E, 0x0F, 0x0F, 0x0A, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
+*/
+
+const uint8_t my_image[6 * 84] = {
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xE0, 0x90, 0x18, 0x08, 0x08, 0x08, 0x08, 0x38, 0x20, 0x20, 0x20, 0x20, 0x10, 0x48, 0x68, 0x28, 0x28, 0x38, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x30, 0x79, 0xB8, 0x8B, 0x83, 0x00, 0x80, 0x40, 0x03, 0x93, 0x00, 0x18, 0x04, 0x21, 0x0E, 0x40, 0xA8, 0x48, 0x0C, 0x0C, 0x9C, 0x94, 0x82, 0x42, 0x42, 0x16, 0x16, 0x06, 0x86, 0x04, 0x14, 0x00, 0x04, 0x04, 0x8C, 0x6A, 0x06, 0x06, 0x12, 0xC0, 0x40, 0x02, 0x82, 0x02, 0x82, 0x26, 0x04, 0x04, 0x0C, 0x78, 0x60, 0x80, 0x80, 0x00, 0x00, 0x00, 0x80, 0x80, 0x80, 0xC0, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x82, 0x62, 0x1E, 0x1A, 0x0D, 0x0D, 0x86, 0xE1, 0x00, 0xC0, 0xE0, 0x4E, 0x46, 0x63, 0x63, 0xC9, 0xBC, 0x88, 0xF2, 0x58, 0x68, 0x60, 0xCD, 0x86, 0xE1, 0x98, 0xF8, 0x07, 0xA0, 0x82, 0x91, 0xC0, 0x4C, 0xC3, 0x42, 0x0D, 0x82, 0xC0, 0x80, 0x1E, 0xC1, 0x40, 0xC0, 0x2A, 0x34, 0x16, 0x04, 0x0C, 0x38, 0x31, 0x1D, 0x11, 0x09, 0x08, 0x04, 0x06, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1E, 0x17, 0x13, 0x0C, 0x06, 0xF3, 0x1E, 0x86, 0xE1, 0x71, 0x1C, 0x06, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x01, 0x01, 0x01, 0x01, 0x00, 0xF0, 0x1F, 0x81, 0xE0, 0x3F, 0x01, 0xFF, 0x00, 0x80, 0xFF, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x02, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x01, 0x00, 0x00, 0x03, 0x03, 0x02, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
+
 int main(void) {
-  clock_setup();
-  pcd8544_setup();
-  usart_setup();
-  mhz19_setup();
+    wchar_t buffer[50] = {0,};
 
-  mhz19_init();
-  pcd8544_init();
-  uint16_t scanPeriod = 0;
-  wchar_t buffer[50];
-  printf("\nRAW SS, HH, LL, TT, Uh, Ul");
+    clock_setup();
+    systick_setup();
+    pcd8544_setup();
+    usart_setup();
+    mhz19_setup();
 
-  while (1) {
-    if (scanPeriod > 600) {
-      scanPeriod = 0;
-      mhz19_readConcentrationCmd();
-      MHZ19_RESPONSE *lResp = mhz19_lastResp();
-      pcd8544_clearDisplay();
-      if (lResp->SS != NOTVALIDREADING) {
-        swprintf(buffer, 50, L"Статус: 0x%02x", lResp->SS );
-        pcd8544_drawText(0, 0, BLACK, buffer);
-        swprintf(buffer, 50, L" %d ppm", mhz19_lastConcentration(0));
-        pcd8544_drawText(0, 8, BLACK, buffer);
+    mhz19_init();
+    pcd8544_init();
 
-        swprintf(buffer, 50, L"Температура: %d C", mhz19_lastTempCelsius());
-        pcd8544_drawText(0, 16, BLACK, buffer);
-        swprintf(buffer, 50, L"CRC: [%d] %s", lResp->CS, (lResp->CS == mhz19_calcLastCrc()) ? "OK" : "CORRUPT");
-        pcd8544_drawText(0, 24, BLACK, buffer);
-      } else {
-        swprintf(buffer, 50, L"Недостоверные\nданные\nСтатус: %d", lResp->SS);
-        pcd8544_drawText(0, 0, BLACK, buffer);
-        swprintf(buffer, 50, L" %d ppm", mhz19_lastConcentration(0));
-        pcd8544_drawText(0, 24, BLACK, buffer);
-      }
-      printf("\nRAW: 0x%02X, %d, %d, %d, %d, %d // CO2 = %d",lResp->SS, lResp->HH, lResp->LL, lResp->TT, lResp->Uh, lResp->Ul, mhz19_lastConcentration(0) );
-     pcd8544_display();
-    } else {
-      scanPeriod++;
+    mhz19_set_5000_diap();
+    mhz19_set_abc_off();
+
+
+    pcd8544_clearDisplay();
+    pcd8544_drawBitmap(0, 0, my_image, 84, 48);
+    pcd8544_display();
+    msleep(2000);
+    //  while(1) {
+    //      gpio_toggle(GPIOC, GPIO13);
+    //      for (int i = 0; i < 800000; i++)	/* Wait a bit. */
+    //                  __asm__("nop");
+    //  }
+    //      while(1) {
+    //          gpio_toggle(GPIOC, GPIO13);
+    //          msleep(1000);
+    //      }
+
+    const uint32_t mz19_timeout_update = 15;
+    const uint32_t display_timeout_update = 1;
+
+    #define HISTORY_SIZE 84
+    #define HISTORY_PPMS_SIZE 5
+    uint16_t history[HISTORY_SIZE] = {0,};
+    uint8_t history_pos = HISTORY_SIZE - 1;
+    const uint8_t line_pos = 32;
+    const uint8_t history_max_height = 12;
+    const uint16_t history_ppms[HISTORY_PPMS_SIZE] = {1000, 2000, 3000, 4000, 5000};
+    uint16_t max_history_ppm = history_ppms[0];
+    uint8_t max_history_ppm_pos = 0;
+
+    uint32_t mz19_millis = 0;
+    uint32_t display_millis = system_millis;
+    MHZ19_RESPONSE *lResp = (MHZ19_RESPONSE *)mhz19_lastResp();
+
+    for(uint8_t i = 0; i < sizeof(MHZ19_RESPONSE); i++)
+        *((char *)lResp + i) = 0;
+
+    while (1) {
+        if((system_millis - mz19_millis) > (mz19_timeout_update * 1000)) {
+            mz19_millis = system_millis;
+            mhz19_readConcentrationCmd();
+            //gpio_toggle(GPIOC, GPIO13);
+            if(history_pos < 0)
+                history_pos = HISTORY_SIZE - 1;
+            if((mhz19_lastConcentration(0) >= 0) && (mhz19_lastConcentration(0) <= 5000)) {
+                history[history_pos] = mhz19_lastConcentration(0);
+                history_pos--;
+            }
+        }
+
+        if((system_millis - display_millis) > (display_timeout_update * 1000)) {
+            display_millis = system_millis;
+            //gpio_toggle(GPIOC, GPIO13);
+
+            pcd8544_clearDisplay();
+
+            if (lResp->SS != NOTVALIDREADING) {
+                //swprintf(buffer, 50, L"Статус: 0x%02x", lResp->SS );
+                //pcd8544_drawText(0, 0, BLACK, buffer);
+                swprintf(buffer, 50, L"%d ppm, CRC %s", mhz19_lastConcentration(0), (lResp->CS == mhz19_calcLastCrc()) ? "OK" : "NOK");
+                pcd8544_drawText(0, 0, BLACK, buffer);
+
+                swprintf(buffer, 50, L"T: %d C", mhz19_lastTempCelsius());
+                pcd8544_drawText(0, 8, BLACK, buffer);
+                uint32_t secs = system_millis / 1000;
+                swprintf(buffer, 50, L"%02d:%02d:%02d", secs / 3600, (secs / 60) % 60, secs % 60);
+                pcd8544_drawText(40, 8, BLACK, buffer);
+                //swprintf(buffer, 50, L"CRC [%X/%X]: %s", lResp->CS, mhz19_calcLastCrc(), (lResp->CS == mhz19_calcLastCrc()) ? "OK" : "CORR");
+                //pcd8544_drawText(0, 16, BLACK, buffer);
+            } else {
+                swprintf(buffer, 50, L"Недостоверные\nданные\nСтатус: %d", lResp->SS);
+                pcd8544_drawText(0, 0, BLACK, buffer);
+                swprintf(buffer, 50, L" %d ppm", mhz19_lastConcentration(0));
+                pcd8544_drawText(0, 16, BLACK, buffer);
+            }
+            //printf("\nRAW: 0x%02X, %d, %d, %d, %d, %d // CO2 = %d",lResp->SS, lResp->HH, lResp->LL, lResp->TT, lResp->Uh, lResp->Ul, mhz19_lastConcentration(0) );
+            swprintf(buffer, 50, L" %d", max_history_ppm);
+            pcd8544_drawText(0, 24, BLACK, buffer);
+            pcd8544_drawLine(30, line_pos, 83, line_pos, 1);
+
+            float max_percent = 0.0;
+            for(uint8_t pos = 0; pos < HISTORY_SIZE; pos++) {
+                float percent = (float)history[pos] / (float)max_history_ppm;
+                if(percent > max_percent)
+                    max_percent = percent;
+
+                uint8_t h = percent * history_max_height;
+                //bug, if h == 0, line will be 2px height
+                pcd8544_drawVLine(HISTORY_SIZE - pos - 1, 46, -h, (h > 0) ? 1 : 0);
+                //history[pos]+=100;
+            }
+
+            if(max_percent > 0.8) {
+                if(max_history_ppm_pos < (HISTORY_PPMS_SIZE - 1))
+                    max_history_ppm_pos++;
+            }
+
+            if(max_percent < 0.3) {
+                if(max_history_ppm_pos > 0)
+                    max_history_ppm_pos--;
+            }
+
+            max_history_ppm = history_ppms[max_history_ppm_pos];
+            pcd8544_display();
+        }
+        msleep(10);
     }
-    for (int i = 0; i < 200000; i++)
-        __asm__("nop");
-  }
 }

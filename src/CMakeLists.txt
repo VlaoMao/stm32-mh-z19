@@ -6,6 +6,7 @@ file(GLOB USER_SOURCES ./*.c ./*.cpp
         ${MHZ19_ROOT}/*.c)
 
 add_executable(${PROJECT_NAME}.elf ${USER_SOURCES})
+add_dependencies(${PROJECT_NAME}.elf libopencm3)
 
 target_link_libraries(${PROJECT_NAME}.elf
         opencm3_stm32f1)

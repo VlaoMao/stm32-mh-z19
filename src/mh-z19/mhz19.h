@@ -12,7 +12,7 @@
 #define MH_Z19_USART USART3
 #endif
 
-typedef struct {
+typedef struct __attribute__ ((__packed__)) {
   uint8_t CMD;
   uint8_t CM;
   uint8_t HH;
@@ -26,18 +26,19 @@ typedef struct {
 
 #define NOTVALIDREADING 0x01
 
-static uint8_t GAS_CONCENTRATION_READ[] = {0xff, 0x01, 0x86, 0x00, 0x00, 0x00, 0x00, 0x00, 0x79};
-static uint8_t CALIBRATE_ZERO[] = {0xff, 0x01, 0x87, 0x00, 0x00, 0x00, 0x00, 0x00, 0x78};
+extern uint8_t GAS_CONCENTRATION_READ[];//[] = {0xff, 0x01, 0x86, 0x00, 0x00, 0x00, 0x00, 0x00, 0x79};
+extern uint8_t CALIBRATE_ZERO[];//[] = {0xff, 0x01, 0x87, 0x00, 0x00, 0x00, 0x00, 0x00, 0x78};
 
 void mhz19_init(void);
 void mhz19_readConcentrationCmd(void);
+//void mhz19_calibrateZero(void);
 void mhz19_isrHandler(uint8_t data);
 uint16_t mhz19_lastConcentration(uint16_t calibrated);
-uint16_t  mhz19_lastTempCelsius();
+int16_t  mhz19_lastTempCelsius();
 uint8_t * mhz19_lastResp();
-uint16_t  mhz19_lastTempCelsius();
 wchar_t * mhz19_lastStatus();
 uint8_t mhz19_calcLastCrc();
-void mhz19_calibrateZero();
+void mhz19_set_5000_diap(void);
+void mhz19_set_abc_off();
 
 #endif //STM32_MH_Z19_MHZ19_H

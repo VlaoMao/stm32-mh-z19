@@ -4,7 +4,7 @@
 
 // the memory buffer for the LCD
 uint8_t pcd8544_buffer[LCDWIDTH * LCDHEIGHT / 8] = {
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC0, 0xE0, 0xF0, 0xF8, 0xFC, 0xFC, 0xFE, 0xFF, 0xFC, 0xE0,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -126,7 +126,7 @@ uint8_t pcd8544_getPixel(int8_t x, int8_t y) {
   return (pcd8544_buffer[x + (y / 8) * LCDWIDTH] >> (y % 8)) & 0x1;
 }
 
-uint8_t pcd8544_drawCircle(int16_t x0, int16_t y0, int16_t r, uint16_t color) {
+void pcd8544_drawCircle(int16_t x0, int16_t y0, int16_t r, uint16_t color) {
   int16_t f = 1 - r;
   int16_t ddF_x = 1;
   int16_t ddF_y = -2 * r;
@@ -215,7 +215,7 @@ void pcd8544_drawHLine(int16_t x, int16_t y, int16_t w, uint16_t color) {
 }
 
 void pcd8544_clearDisplay() {
-  uint16_t length = LCDWIDTH * LCDHEIGHT / 8 - 1;
+  uint16_t length = (LCDWIDTH * LCDHEIGHT / 8) - 1;
   for (int i = 0; i < length; i++)
     pcd8544_buffer[i] = 0x00;
 }
@@ -229,9 +229,14 @@ const Ks0108Char_t *getCharacter(uint16_t s) {
   return &spaceChar;
 }
 
-uint8_t pcd8544_GoTo(uint8_t x, uint8_t y) {//послать команду на позиционирование по адресу
+void pcd8544_GoTo(uint8_t x, uint8_t y) {//послать команду на позиционирование по адресу
   command(PCD8544_SET_PAGE | (y / 8));
   command(PCD8544_SET_ADDRESS | x);
+}
+
+void pcd8544_setInverted(int inverted)
+{
+    command(inverted ? PCD8544_DISPLAY_INVERTED : PCD8544_DISPLAY_NORMAL);
 }
 
 void
@@ -244,7 +249,7 @@ pcd8544_drawText(uint8_t x, uint8_t y, uint8_t color, wchar_t *text) { //x и y 
       y += 8;
       x = 0;
     } else {
-      Ks0108Char_t *charCur = getCharacter(symbol);
+      const Ks0108Char_t *charCur = getCharacter(symbol);
       uint8_t cBites = (uint8_t) (y % 8);
 
       int i = 0;
@@ -272,4 +277,39 @@ pcd8544_drawText(uint8_t x, uint8_t y, uint8_t color, wchar_t *text) { //x и y 
 
     charPos += 1;
   } while (symbol != 0x00);
+}
+
+void pcd8544_drawBitmap(int x, int y, const uint8_t *bitmap, int sx, int sy)
+{
+    int bit;
+    uint8_t data;
+
+    for (int cy=0; cy<sy; cy++)
+    {
+        bit= cy % 8;
+        for(int cx=0; cx<sx; cx++)
+        {
+            data=bitmap[cx+((cy/8)*sx)];
+            if ((data & (1<<bit))>0)
+                pcd8544_drawPixel(x+cx, y+cy, 1);
+            else
+                pcd8544_drawPixel(x+cx, y+cy, 0);
+        }
+    }
+}
+
+void clrScr()
+{
+    uint8_t c, maxC = LCDWIDTH - 1, p;
+    for (p = 0; p < 6; p++) {
+      command(PCD8544_SET_PAGE | p);
+      c = 0;
+      command(PCD8544_SET_ADDRESS | c);
+      DC_HIGH
+      SCE_LOW
+      for (; c < maxC; c++) {
+        send(0); //todo make it through the DMA
+      }
+      SCE_HIGH
+    }
 }
