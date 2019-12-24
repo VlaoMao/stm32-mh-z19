@@ -223,7 +223,7 @@ int main(void) {
     #define HISTORY_SIZE 84
     #define HISTORY_PPMS_SIZE 5
     uint16_t history[HISTORY_SIZE] = {0,};
-    uint8_t history_pos = HISTORY_SIZE - 1;
+    uint8_t history_pos = 0;//HISTORY_SIZE - 10;
     const uint8_t line_pos = 32;
     const uint8_t history_max_height = 12;
     const uint16_t history_ppms[HISTORY_PPMS_SIZE] = {1000, 2000, 3000, 4000, 5000};
@@ -234,19 +234,26 @@ int main(void) {
     uint32_t display_millis = system_millis;
     MHZ19_RESPONSE *lResp = (MHZ19_RESPONSE *)mhz19_lastResp();
 
-    for(uint8_t i = 0; i < sizeof(MHZ19_RESPONSE); i++)
-        *((char *)lResp + i) = 0;
+    //for(uint8_t i = 0; i < sizeof(MHZ19_RESPONSE); i++)
+    //    *((char *)lResp + i) = 0;
 
     while (1) {
         if((system_millis - mz19_millis) > (mz19_timeout_update * 1000)) {
             mz19_millis = system_millis;
             mhz19_readConcentrationCmd();
             //gpio_toggle(GPIOC, GPIO13);
-            if(history_pos < 0)
+            if(history_pos >= (HISTORY_SIZE - 1)) {
                 history_pos = HISTORY_SIZE - 1;
-            if((mhz19_lastConcentration(0) >= 0) && (mhz19_lastConcentration(0) <= 5000)) {
+                //array shift
+                for(uint8_t i = 1; i < (HISTORY_SIZE); i++)
+                    history[i - 1] = history[i];
+            }
+
+            if((mhz19_lastConcentration(0) > 0) && (mhz19_lastConcentration(0) <= 5000)) {
                 history[history_pos] = mhz19_lastConcentration(0);
-                history_pos--;
+
+                if(history_pos < (HISTORY_SIZE - 1))
+                    history_pos++;
             }
         }
 
@@ -283,21 +290,23 @@ int main(void) {
             float max_percent = 0.0;
             for(uint8_t pos = 0; pos < HISTORY_SIZE; pos++) {
                 float percent = (float)history[pos] / (float)max_history_ppm;
+                if(percent > 1)
+                    percent = 1;
+
                 if(percent > max_percent)
                     max_percent = percent;
 
                 uint8_t h = percent * history_max_height;
                 //bug, if h == 0, line will be 2px height
-                pcd8544_drawVLine(HISTORY_SIZE - pos - 1, 46, -h, (h > 0) ? 1 : 0);
-                //history[pos]+=100;
+                pcd8544_drawVLine(pos, 46, -h, (h > 0) ? 1 : 0);
             }
 
-            if(max_percent > 0.8) {
+            if(max_percent > 0.8) { // ~800, 1600, 2400, 3200 ppms
                 if(max_history_ppm_pos < (HISTORY_PPMS_SIZE - 1))
                     max_history_ppm_pos++;
             }
 
-            if(max_percent < 0.3) {
+            if(max_percent < 0.4) { // ~3200 (0,64), 2400 (0,6), 1600(0,53), 800(0,4)
                 if(max_history_ppm_pos > 0)
                     max_history_ppm_pos--;
             }

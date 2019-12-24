@@ -91,10 +91,22 @@ void mhz19_isrHandler(uint8_t data) {
                 mhz19_cmdIndex = 1;
     }
 }
-
+//int32_t value = 0;
+//int8_t value_dir = 1;
 uint16_t mhz19_lastConcentration(uint16_t calibrated) {
     MHZ19_RESPONSE * r = (MHZ19_RESPONSE *) mhz19LastResponse;
     return r->HH * 256 + r->LL -calibrated;
+/*
+    if(value >= 5000)
+        value_dir = -1;
+    if(value <= 0)
+        value_dir = 1;
+
+    if(value_dir > 0)
+        return value += 50;
+    else
+        return value -= 50;
+*/
 }
 
 int16_t mhz19_lastTempCelsius() {
